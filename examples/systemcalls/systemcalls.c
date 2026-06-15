@@ -1,4 +1,25 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include "fcntl.h"
+#include <sys/wait.h>
+#include <syslog.h>
+
+int checkifexecutable(const char *cmdname)
+{
+    int result;
+    struct stat statinfo;
+
+    result = stat(cmdname, &statinfo);
+    if (result < 0) return 0;
+    if (!S_ISREG(statinfo.st_mode)) return 0;
+
+    if (statinfo.st_uid == geteuid()) return statinfo.st_mode & S_IXUSR;
+    if (statinfo.st_gid == getegid()) return statinfo.st_mode & S_IXGRP;
+    return statinfo.st_mode & S_IXOTH;
+}
 
 /**
  * @param cmd the command to execute with system()
@@ -16,7 +37,11 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
+    int ret = system (cmd);
+    if (ret == -1) {
+        perror ("system");
+        return false;
+    }
     return true;
 }
 
@@ -47,7 +72,7 @@ bool do_exec(int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 /*
  * TODO:
@@ -59,9 +84,55 @@ bool do_exec(int count, ...)
  *
 */
 
+    for(i=0; i<count; i++)
+    {
+        if (i == 0) printf("**********************\nCommand: %s\n", command[i]);
+        else printf("Argument(s)[%d]: %s\n", i, command[i]);
+    }
+    printf("Argument(s)[%d]: %s\n", i, command[i]);
+    int   ret;
+    pid_t kidpid;
+
+    if (access(command[count-1], F_OK) != 0) {
+        //fprintf(stderr, "error: command %s doesnot exist.\n", command[count-1]);
+        syslog(LOG_ERR, "error: command %s doesnot exist.\n", command[count-1]);
+        return false;
+    }
+    fflush(stdout); //to avoid double output in printf after fork() call
+    kidpid = fork();
+    if (kidpid == -1) {
+        perror ("fork");
+        return false;
+    }
+    if (kidpid == 0) {
+        /*child process has been invoked*/
+        printf("My PID is %d\n", kidpid);
+        /*executing another pprogramm/command in the child process*/
+        ret = execv(command[0], command);
+        //if execv has returned - there is an error
+        if (ret == -1) {
+            perror ("execv");
+            exit(EXIT_FAILURE); //return false;
+        }
+        return false;
+    } else {
+        // the parent process - wait utill child has terminated
+        int status;
+        // wait until the child process ends
+        if (waitpid(kidpid, &status, 0) == -1) {
+            perror("waitpid");
+            return false;
+        }
+        //check if child was completed successfully
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+            return true;
+        else
+            return false;
+    }
+
     va_end(args);
 
-    return true;
+    return false;
 }
 
 /**
@@ -82,7 +153,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 
 /*
@@ -92,6 +163,71 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    for(i=0; i<count; i++)
+    {
+        if (i == 0) printf("**********************\nCommand: %s\n", command[i]);
+        else printf("Argument(s)[%d]: %s\n", i, command[i]);
+    }
+    printf("Argument(s)[%d]: %s\n", i, command[i]);
+    pid_t pid;
+    fflush(stdout); //to avoid double output in printf after fork() call
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644); //open a file in which it redirects
+    if (fd < 0) { perror("open"); return false; }
+    switch (pid = fork()) {
+      case -1: close(fd); perror("fork"); return false;
+      case 0:
+          //child process
+          if (dup2(fd, 1) < 0) { perror("dup2"); return false;}
+          close(fd);
+          execv(command[0], (char* const*)command);
+          //if execv has returned - there is an error
+          perror ("execv");
+          exit(EXIT_FAILURE); //return false;
+      default:
+          close(fd);
+          /* do whatever the parent wants to do. */
+          // the parent process - wait utill child has terminated
+          int status;
+          // wait until the child process ends
+          if (waitpid(pid, &status, 0) == -1) {
+              perror("waitpid");
+              return false;
+          }
+          //check if child was completed successfully
+          if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+              return true;
+          else
+              return false;
+    }
+
+/*    fflush(stdout); //to avoid double output in printf after fork() call
+    pid = fork();
+    if (pid == -1) {
+        perror ("fork");
+        return false;
+    }
+    if (pid == 0) {
+        //child process
+        printf("My PID is %d\n", pid);
+        int ret = execv(command[0], (char* const*)command);
+        if (ret == -1) {
+            perror ("execv");
+            exit(EXIT_FAILURE); //return false;
+        }
+    } else {
+        // the parent process - wait utill child has terminated
+        int status;
+        // wait until the child process ends
+        if (waitpid(pid, &status, 0) == -1) {
+            perror("waitpid");
+            return false;
+        }
+        //check if child was completed successfully
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+            return true;
+        else
+            return false;
+    }*/
 
     va_end(args);
 
