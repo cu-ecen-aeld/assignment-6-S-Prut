@@ -18,6 +18,12 @@ struct thread_data {
     struct thread_data* p_next_node;
 };
 
+typedef struct SinglyLinkedList {
+    struct thread_data *head;
+    struct thread_data *tail;
+    int                 size;
+} SinglyLinkedList;
+
 typedef struct server_data {
    int                 server_fd;
    struct thread_data* p_thread_node_list;
