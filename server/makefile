@@ -3,9 +3,10 @@ SOURCES := aesdsocket.c
 OBJECTS := $(SOURCES:.c=.o)
 
 CC := $(CROSS_COMPILE)gcc
-CFLAGS += -Wall -Werror
-CFLAGS_DEBUG += $(CFLAGS) -g -O0
+CFLAGS = -Wall -Werror
+CFLAGS_DEBUG += -g -O0 $(CFLAGS)
 
+default: Debug
 Debug: $(SOURCES)
 	@echo "--- Debug ---"
 	@echo "Compiler: " $(CC)
