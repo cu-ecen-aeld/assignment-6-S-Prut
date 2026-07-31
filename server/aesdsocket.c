@@ -21,6 +21,11 @@
 #include <unistd.h>     // file handling write() fnc
 #include <fcntl.h>      // file handling open(() fnc
 #include <signal.h>     // signals handling
+#include <errno.h>      // error handling
+
+#include <signal.h>
+#include <sys/time.h>   // time handling
+#include <stdatomic.h>  // use atomic variables to avoid races
 
 //--------------------------
 // definitions section
@@ -35,6 +40,8 @@
 #define FILE_NAME      "aesdsocketdata"
 #define BUFFER_SIZE              (1460)
 #define IP_ADDRESS_STR_LEN         (16)
+#define TIME_STAMP_STR_LEN         (50)
+#define WAIT_TIME_MS            (10000)
 
 #define NC                      "\e[0m"
 #define COLOR_RED            "\e[1;31m"
@@ -64,14 +71,115 @@ typedef struct thread_data thread_data_t;
 ****************************/
 volatile sig_atomic_t shutdown_requested = 0;
 
-pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t file_mutex  = PTHREAD_MUTEX_INITIALIZER;
 server_data_t   server_data = {0, NULL};
 
 
+void insertNode(const thread_data_t * const p_node_list, const thread_data_t * const p_new_node)
+{
+   thread_data_t* p_current_node = (thread_data_t*)p_node_list;
+   while (NULL != p_current_node->p_next_node)
+   { //look for the end of list
+      p_current_node = p_current_node->p_next_node;
+   }
+   //insert a node at the end of list
+   p_current_node->p_next_node = (thread_data_t*)p_new_node;
+}
 
+void removeNode(thread_data_t* p_node_list, const thread_data_t* p_node)
+{
+   thread_data_t* p_current_node = p_node_list;
+   thread_data_t* p_previouse_node = NULL;
+   while (NULL != p_current_node)
+   { //untill not the end of list
+      if (p_current_node->thread_id == p_node->thread_id)
+      {
+         //check if the current node the first node in the list
+         if (p_current_node == p_node_list) {
+            //remove first node of list
+
+            //is the thread completed
+            if (!pthread_join(p_current_node->thread_id, NULL))
+            {
+               close(p_current_node->client_fd); //close thread descriptor
+               p_current_node->thread_finished_success = true;
+            }
+
+            p_node_list = p_current_node->p_next_node; //set the list head to the next node
+            free(p_current_node); // free the memory
+
+         } else if (NULL == p_current_node->p_next_node) {
+            //check if it is last node
+
+            //is the thread completed
+            if (!pthread_join(p_current_node->thread_id, NULL))
+            {
+               close(p_current_node->client_fd); //close thread descriptor
+               p_current_node->thread_finished_success = true;
+            }
+
+            if (p_previouse_node->p_next_node == p_current_node) {
+               p_previouse_node->p_next_node = NULL; //terminate the list
+            }
+            free(p_current_node); //free memory
+
+         } else {
+            //it is not the first and not the last, just remove
+
+            if (!pthread_join(p_current_node->thread_id, NULL))
+            {
+               close(p_current_node->client_fd); //close thread descriptor
+               p_current_node->thread_finished_success = true;
+
+            }
+
+            if (p_previouse_node->p_next_node == p_current_node) {
+               p_previouse_node->p_next_node = p_current_node->p_next_node;
+            }
+
+            free(p_current_node); //free memory
+
+         }
+         return;
+      } else
+      { //go to the next node in the list
+         p_previouse_node = p_current_node;
+         p_current_node   = p_current_node->p_next_node;
+      }
+   }
+}
+
+void deleteNodeList(thread_data_t* p_node_list)
+{
+   thread_data_t* p_current_node = p_node_list;
+   while (p_current_node != NULL)
+   {
+
+      if (!pthread_join(p_current_node->thread_id, NULL))
+      {
+         close(p_current_node->client_fd);
+         p_current_node->thread_finished_success = true;
+
+      }
+
+      thread_data_t* p_temp_node = p_current_node;
+      p_current_node = p_current_node->p_next_node;
+      free(p_temp_node); //free memory
+
+   }
+   p_node_list = NULL;
+}
+
+void setIntervalTimerDescriptorInNodeList(server_data_t* p_server_data, timer_t timerid)
+{
+   p_server_data->timer_id = timerid;
+}
+
+/*****************************************************
+* GLOBAL FUNCTIONS
+*****************************************************/
 void shutdown_clients(thread_data_t* p_node_list)
 {
-   thread_data_t* p_next_node = NULL;
    if (p_node_list == NULL) { perror("Clients shutdown failed."); return; }
    thread_data_t* p_current_node = p_node_list;
 #ifdef DEBUG_MODE_EN
@@ -92,9 +200,9 @@ void shutdown_clients(thread_data_t* p_node_list)
 
       }
 
-      p_next_node = p_current_node->p_next_node;
-      free(p_current_node);
-      p_current_node = p_next_node;
+      thread_data_t* p_temp_node = p_current_node;
+      p_current_node = p_current_node->p_next_node;
+      free(p_temp_node);
 
    }
 }
@@ -117,6 +225,9 @@ void signal_handler(int signal_number)
       remove(file_name); //remove temporary file from /var/tmp
 
       shutdown_clients(server_data.p_thread_node_list);
+
+      printf("Interval-Timer stoped!\n");
+      timer_delete(server_data.timer_id);
 
       //destroy file_mutex & close server socket
       printf("Closing server socket...\n");
@@ -183,8 +294,9 @@ ret_code_type write_packet(char* data, int data_len, const char* file_path)
 
 /**
  * @fn send_file_to_socket
- * @param socket_id
- * @param file_path
+ * @param socket_id - socket file descriptor
+ * @param file_path - path and name of file to be read from
+ * @return ret_code_type - the result of sending
  */
 ret_code_type send_file_to_socket(int socket_id, const char* file_path) {
    ssize_t nr_bytes = 0;                 // returned number of read data from file
@@ -252,6 +364,22 @@ ret_code_type send_file_to_socket(int socket_id, const char* file_path) {
 
    return ret_success;
 }
+
+
+bool print_clock_time( clockid_t id, const char *clocktype, struct timespec *ts )
+{
+    bool success = false;
+    int rc = clock_gettime(id,ts);
+    if( rc != 0 ) {
+        printf("Error %d (%s) getting clock %d (%s) time\n",
+                errno,strerror(errno),id,clocktype);
+    } else {
+        printf("Clock %d (%s) %ld.%09ld\n",id,clocktype,ts->tv_sec,ts->tv_nsec);
+        success = true;
+    }
+    return success;
+}
+
 
 
 /**
@@ -330,9 +458,11 @@ void* client_thread(void* p_thread_data)
 
             //the end of packet has achived
             int packet_len = i - pkg_start_pos + 1; //calculate the length of last received packet
-
+#ifdef DEBUG_MODE_EN
             printf("write to %s\n", file_name);
+#endif //DEBUG_MODE_EN
             //append to file the last received packet only
+
             //if (write_pkg_to_file(pkg_buffer + pkg_start_pos, file_name) < 0) { printf("Write file failed.\n"); break;}
             if (ret_failed == write_packet(pkg_buffer + pkg_start_pos, packet_len, file_name)) {
                printf("Write file failed.\n"); break;
@@ -359,6 +489,143 @@ void* client_thread(void* p_thread_data)
    printf("Client thread completed!\n");
    return NULL;
 }
+
+
+/* SIGEV_SIGNAL solution
+atomic_int timerExpired = 0;
+void timer_handler(int signo)
+{
+   timerExpired = 1;
+}
+
+void interval_timer_callback (int sig)
+ End of SIGEV_SIGNAL solution */
+/**
+* @fn interval_timer_callback
+*     interval timer callback handler shall perform the timer signal interrupting
+*     and store a timestamp into a file
+* @param sv - union sigval
+*/
+void interval_timer_callback (union sigval sv)
+{
+   //const char *file = PATH_TO_FILE "/timestamps.txt\0";
+   const char *file = PATH_TO_FILE "/" FILE_NAME "\0";
+   if (!shutdown_requested) {
+      struct timespec ts_realtime_start;
+      clockid_t id = CLOCK_REALTIME;
+
+      int rc = clock_gettime(id, &ts_realtime_start);
+      if( rc != 0 ) {
+         printf("Error %d (%s) getting clock %d (%s) time\n",
+                 errno,strerror(errno),id,"CLOCK_REALTIME");
+      } else {
+         //msleep(WAIT_TIME_MS);
+         struct tm tm;
+         if ( gmtime_r(&ts_realtime_start.tv_sec,&tm) == NULL ) {
+            printf("Error calling gmtime_r with time %ld\n",ts_realtime_start.tv_sec);
+         } else  {
+
+            char timestamp[TIME_STAMP_STR_LEN] = {0}, result[TIME_STAMP_STR_LEN] = {0};
+            //char* timestamp = (char*)calloc(TIME_STAMP_STR_LEN, sizeof(char));
+            //char* result    = (char*)calloc(TIME_STAMP_STR_LEN, sizeof(char));
+            if( strftime(result,sizeof(result),"%a, %d %b %Y %T %z",&tm) == 0 ) {
+               printf("Error converting string with strftime\n");
+            } else {
+
+               if (TIME_STAMP_STR_LEN > (int)strlen(result)) {
+                  strcat(timestamp, "timestamp:");
+                  strcat(timestamp, (const char*)result);
+                  strcat(timestamp, "\n");
+               }
+               syslog(LOG_DEBUG, "Writing time-stamp");
+#ifdef DEBUG_MODE_EN
+               printf("%sWriting file %s ...%s\n", COLOR_YELLOW, file, NC);
+#endif //DEBUG_MODE_EN
+               if (ret_failed == write_packet(timestamp, strlen(timestamp), file)) {
+                  printf("Write file failed.\n"); return;
+               }
+
+            }
+            //free(result);
+            //free(timestamp);
+         } //if ( gmtime_r(...)
+      } //if (rc!=0)
+   }
+
+} //time_handler
+
+void setup_interval_timer()
+{
+   //start UNIX solution (depricated)
+/*   struct sigaction sa;
+   struct itimerval timer;
+   sa.sa_handler = interval_timer_callback;
+   sigemptyset(&sa.sa_mask);
+   sa.sa_flags = 0;
+   sigaction(SIGALRM, &sa, NULL);
+
+   timer.it_value.tv_sec     = 3;      // first alarm after 10 s
+   timer.it_value.tv_usec    = 0;
+
+   timer.it_interval.tv_sec  = 3;   // than all 10 s
+   timer.it_interval.tv_usec = 0;
+
+   //arming the timer
+   if (0 != setitimer(ITIMER_REAL, &timer, NULL)) { perror("setitimer"); };
+*/   // end UNIX solution
+
+   //start POSIX-based solution
+   struct itimerspec      ts;
+   struct sigevent       evp;
+   timer_t           timerid;
+
+   //SIGEV_SIGNAL solution
+/*   struct sigaction       sa;
+   sa.sa_handler = timer_handler;
+   sigemptyset(&sa.sa_mask);
+   sa.sa_flags   = 0;
+   sigaction(SIGUSR1, &sa, NULL);
+
+   evp.sigev_value.sival_ptr = &timerid;
+   evp.sigev_notify          = SIGEV_SIGNAL;
+   evp.sigev_signo           = SIGUSR1;
+*/
+
+   //alternative SIGEV_THREAD solution
+   evp.sigev_value.sival_ptr   = NULL;
+   evp.sigev_notify            = SIGEV_THREAD;
+   evp.sigev_notify_attributes = NULL;
+   evp.sigev_notify_function   = interval_timer_callback;
+
+   //create a timer
+   if (0 != timer_create (CLOCK_REALTIME,
+                          &evp,
+                          &timerid))
+   { perror ("timer_create"); }
+
+   //configure periodic timer that expires every second
+   ts.it_interval.tv_sec  = 10; //first time timer triggers
+   ts.it_interval.tv_nsec = 0;
+   ts.it_value.tv_sec     = 10; //how offen timer triggers further
+   ts.it_value.tv_nsec    = 0;
+
+   //arming the timer
+   if (0 != timer_settime (timerid,
+                           0,
+                           &ts,
+                           NULL))
+   { perror ("timer_settime"); }
+   server_data.timer_id = timerid;
+   //end POSIX-based solution (SIGEV_SIGNAL/SIGEV_THREAD
+
+   //start POSIX-based timer thread solution
+   //end POSIX-based timer thread solution
+   printf("Interval-Timer started...\n");
+
+   //timer_delete(&timerid);
+   //printf("Interval-Timer stoped!\n");
+
+} //setup_interval_timer
 
 
 void setup_server()
@@ -419,8 +686,17 @@ void setup_server()
    socklen_t client_addr_len = sizeof client_addr;
 
    while (!shutdown_requested)
-   { //receive packets over the connection, endless loop
-     //it coud be separated into more than one packet
+   {
+      //SIGEV_SIGNAL solution
+/*      if (timerExpired)
+      {
+         timerExpired = 0;
+         interval_timer_callback(SIGUSR1);
+      }
+*/
+
+      //receive packets over the connection, endless loop
+      //it coud be separated into more than one packet
       int client_descriptor = accept(server_descriptor,
                                      (struct sockaddr *)&client_addr,
                                      &client_addr_len);
@@ -479,9 +755,8 @@ void setup_server()
       }
       //else thread creation failed
 
-
    } //while(!shutdown_requested)
-}
+} //setup_server
 
 /**
  * @fn main
@@ -497,7 +772,11 @@ int main (int argc, char *argv[]) {
    signal(SIGINT, signal_handler);  //assign SIGINT (e.g. Ctrl-C) to signal-handler
    signal(SIGTERM, signal_handler); //assign SIGTERM (e.g. kill -TERM) to signal-handler
 
+   //setting up and arming a timer
+   setup_interval_timer();
+
    setup_server();
+
    //close syslog
    closelog();
    return EXIT_SUCCESS;

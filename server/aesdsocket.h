@@ -26,6 +26,7 @@ typedef struct SinglyLinkedList {
 
 typedef struct server_data {
    int                 server_fd;
+   timer_t             timer_id;
    struct thread_data* p_thread_node_list;
 } server_data_t;
 #endif //AESDSOCKET_H

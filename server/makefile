@@ -6,7 +6,8 @@ CC := $(CROSS_COMPILE)gcc
 CFLAGS = -Wall -Werror
 CFLAGS_DEBUG += -g -O0 $(CFLAGS)
 
-default: Debug
+default: all
+
 Debug: $(SOURCES)
 	@echo "--- Debug ---"
 	@echo "Compiler: " $(CC)
