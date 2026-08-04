@@ -545,10 +545,10 @@ void interval_timer_callback (union sigval sv)
                   printf("Write file failed.\n"); return;
                }
 
-            }
+            }//if( strftime(..))
             //free(result);
             //free(timestamp);
-         } //if ( gmtime_r(...)
+         } //if ( gmtime_r(...))
       } //if (rc!=0)
    }
 
