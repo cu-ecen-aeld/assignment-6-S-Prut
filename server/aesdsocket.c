@@ -55,6 +55,11 @@
 
 #define msleep(milliseconds) usleep((unsigned int)milliseconds*1000)
 
+#define handle_error(msg)\
+   syslog(LOG_ERR, "Error on %s", msg);\
+   closelog();\
+   return EXIT_FAILURE;
+
 //--------------------------
 // declarations section
 //--------------------------
@@ -178,6 +183,32 @@ void setIntervalTimerDescriptorInNodeList(server_data_t* p_server_data, timer_t 
 /*****************************************************
 * GLOBAL FUNCTIONS
 *****************************************************/
+
+/**
+ * @fn invoke_daemon
+ *     This function provide a service to fork a process and invoke it as deamon
+ */
+void invoke_daemon()
+{
+    pid_t pid = fork();
+
+    if (pid < 0) exit(EXIT_FAILURE);
+    if (pid > 0) exit(EXIT_SUCCESS); // Parent exits
+
+    if (setsid() < 0) exit(EXIT_FAILURE);
+
+    pid = fork();
+    if (pid < 0) exit(EXIT_FAILURE);
+    if (pid > 0) exit(EXIT_SUCCESS);
+
+    umask(0);
+    chdir("/");
+
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+}
+
 void shutdown_clients(thread_data_t* p_node_list)
 {
    if (p_node_list == NULL) { perror("Clients shutdown failed."); return; }
@@ -765,6 +796,9 @@ void setup_server()
  * @param argv - Array of arguments
  */
 int main (int argc, char *argv[]) {
+
+   bool deamon_mode = false;
+
    //open syslog
    openlog(NULL, 0, LOG_USER); //start syslog
 
@@ -772,9 +806,34 @@ int main (int argc, char *argv[]) {
    signal(SIGINT, signal_handler);  //assign SIGINT (e.g. Ctrl-C) to signal-handler
    signal(SIGTERM, signal_handler); //assign SIGTERM (e.g. kill -TERM) to signal-handler
 
+   if (argc == 1) {
+#ifdef DEBUG_MODE_EN
+      printf("Started in server mode\n");
+#endif
+      deamon_mode = false;
+   }
+   else if (argc > 1)
+   {
+      if (strcmp(argv[1], "-d") == 0)
+      {
+         deamon_mode = true;
+//TODO: undefine definition to avoid use of printf in deamon-mode, because printf won't work (stdout is closed)
+#ifdef DEBUG_MODE_EN
+         printf("Started in deamon mode\n");
+#endif
+         invoke_daemon();
+      }
+      else
+      {
+         printf("Usage: %s [-d]\n", argv[0]);
+         handle_error("arguments");
+      }
+   }
+
    //setting up and arming a timer
    setup_interval_timer();
 
+   if (deamon_mode) printf("Started as deamon - shall fork the process. TBD!\n");
    setup_server();
 
    //close syslog

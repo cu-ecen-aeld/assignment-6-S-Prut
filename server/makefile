@@ -6,15 +6,14 @@ CC := $(CROSS_COMPILE)gcc
 CFLAGS = -Wall -Werror
 CFLAGS_DEBUG += -g -O0 $(CFLAGS)
 
+#Debug: $(SOURCES)
+#	@echo "--- Debug ---"
+#	@echo "Compiler: " $(CC)
+#	@echo "--- start compile sources" $< " ---"
+#	$(CC) $(CFLAGS_DEBUG) -c $^ -o $(TARGET)
+#	@echo "--- end compile sources" $< " ---"
+
 default: all
-
-Debug: $(SOURCES)
-	@echo "--- Debug ---"
-	@echo "Compiler: " $(CC)
-	@echo "--- start compile sources" $< " ---"
-	$(CC) $(CFLAGS_DEBUG) -c $^ -o $(TARGET)
-	@echo "--- end compile sources" $< " ---"
-
 all: $(TARGET)
 	@echo "Compiler: " $(CC)
 
