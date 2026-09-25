@@ -1,10 +1,11 @@
-TARGET  := aesdsocket
-SOURCES := aesdsocket.c
-OBJECTS := $(SOURCES:.c=.o)
+TARGET  ?= aesdsocket
+SOURCES ?= aesdsocket.c
+OBJECTS ?= $(SOURCES:.c=.o)
 
-CC := $(CROSS_COMPILE)gcc
-CFLAGS = -Wall -Werror
-CFLAGS_DEBUG += -g -O0 $(CFLAGS)
+CC      ?= $(CROSS_COMPILE)gcc
+CFLAGS  ?= -Wall -Werror
+CFLAGS_DEBUG ?= -g -O0 $(CFLAGS)
+LDFLAGS ?= -lpthread -lrt
 
 #Debug: $(SOURCES)
 #	@echo "--- Debug ---"
