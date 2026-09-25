@@ -26,7 +26,7 @@ all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
 	@echo "--- start build target" $@ " ---"
-	$(CC) $(OBJECTS) -o $@
+	$(CC) $(LDFLAGS) $(OBJECTS) -o $@
 	@echo "--- end build target" $@ " ---"
 
 .PHONY: clean
